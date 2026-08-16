@@ -25,6 +25,45 @@ function collectFiles(directory, extensions) {
   return files
 }
 
+function collectScriptElements(html) {
+  const elements = []
+  const lowerHtml = html.toLowerCase()
+  let cursor = 0
+
+  while (cursor < html.length) {
+    const openStart = lowerHtml.indexOf('<script', cursor)
+    if (openStart === -1) break
+
+    const boundary = lowerHtml[openStart + '<script'.length]
+    if (boundary && !/[\s/>]/.test(boundary)) {
+      cursor = openStart + '<script'.length
+      continue
+    }
+
+    const openEnd = html.indexOf('>', openStart + '<script'.length)
+    assert(openEnd !== -1, 'The build contains an unterminated script start tag.')
+
+    const closeStart = lowerHtml.indexOf('</script', openEnd + 1)
+    assert(closeStart !== -1, 'The build contains a script without an end tag.')
+
+    const closeBoundary = lowerHtml[closeStart + '</script'.length]
+    assert(
+      !closeBoundary || /[\s>]/.test(closeBoundary),
+      'The build contains an invalid script end tag.',
+    )
+    const closeEnd = html.indexOf('>', closeStart + '</script'.length)
+    assert(closeEnd !== -1, 'The build contains an unterminated script end tag.')
+
+    elements.push({
+      attributes: html.slice(openStart + '<script'.length, openEnd),
+      contents: html.slice(openEnd + 1, closeStart),
+    })
+    cursor = closeEnd + 1
+  }
+
+  return elements
+}
+
 const vercel = JSON.parse(read('vercel.json'))
 const catchAll = vercel.headers?.find((entry) => entry.source === '/(.*)')
 assert(catchAll, 'vercel.json must define catch-all security headers.')
@@ -83,9 +122,10 @@ for (const [name, expectedValues] of requiredDirectives) {
 assert(directives.has('upgrade-insecure-requests'), 'CSP must upgrade insecure requests.')
 
 const builtHtml = read('dist/index.html')
-const inlineScripts = [...builtHtml.matchAll(/<script\b([^>]*)>([\s\S]*?)<\/script>/gi)]
-  .filter(([, attributes]) => !/\bsrc\s*=/.test(attributes))
-  .map(([, , contents]) => `'sha256-${createHash('sha256').update(contents).digest('base64')}'`)
+const scriptElements = collectScriptElements(builtHtml)
+const inlineScripts = scriptElements
+  .filter(({ attributes }) => !/\bsrc\s*=/.test(attributes))
+  .map(({ contents }) => `'sha256-${createHash('sha256').update(contents).digest('base64')}'`)
 const scriptSources = directives.get('script-src') ?? []
 const declaredHashes = scriptSources.filter((source) => source.startsWith("'sha256-"))
 
@@ -98,8 +138,8 @@ assert(
   'CSP contains a stale or unexpected inline-script hash.',
 )
 
-for (const match of builtHtml.matchAll(/<script\b([^>]*)>/gi)) {
-  const source = match[1].match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1]
+for (const { attributes } of scriptElements) {
+  const source = attributes.match(/\bsrc\s*=\s*["']([^"']+)["']/i)?.[1]
   if (source) {
     assert(!/^(?:[a-z][a-z0-9+.-]*:|\/\/)/i.test(source), `External script is not allowed: ${source}`)
   }
