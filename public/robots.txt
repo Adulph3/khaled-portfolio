@@ -1,0 +1,5 @@
+# Replace the example origin before deployment; see README.md.
+User-agent: *
+Allow: /
+
+Sitemap: https://example.com/sitemap.xml
